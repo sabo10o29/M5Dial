@@ -4,7 +4,7 @@
 M5Canvas img(&M5Dial.Display);
 
 // メニューリスト
-String menuItems[7] = {"20sec Timer", "10min Timer", "25min Timer", "Stop Watch", "Exit", "Status", "Reset"};
+String menuItems[8] = {"20sec Timer", "10min Timer", "25min Timer", "Stop Watch", "Exit", "Status", "Reset", "Timer"};
 int numItem = sizeof(menuItems) / sizeof(menuItems[0]);
 int viewItemIndex[5] = {0, 1, 2, 3, 4};
 uint16_t baseItemPosition[5][2] = {
@@ -25,6 +25,7 @@ long oldDialPosition = -999;
 int timeCount = 0;
 int totalTimeCount = 0;
 bool enableTouchSound = true;
+int chosen = 2;
 
 // ファイルシステムへの設定
 // 一行目：totalTimeCount
@@ -191,6 +192,15 @@ void draw()
     img.drawString("Touch to reset", 120, 100);
     img.drawString("total time count.", 120, 140);
   }
+  else if (mode == 7)
+  {
+    img.setFont(&fonts::Font7);
+    img.setTextSize(1);
+    String *numS = getStrTimeArray(timeCount);
+    img.drawString(numS[0] + ":" + numS[1] + ":" + numS[2], 120, 120);
+    img.fillRect(14 + (chosen * 76), 150, 59, 4, GREEN);
+    img.drawString(hasStartedTimer ? "STOP" : "START", 120, 190, 4);
+  }
   else
   {
     img.setTextSize(2);
@@ -247,6 +257,24 @@ void handleTouch()
     totalTimeCount = 0;
     writeConfig();
   }
+  // 可変タイマー
+  else if (mode == 7)
+  {
+    if (t.y > 160)
+    {
+      hasStartedTimer = !hasStartedTimer;
+      alert = false;
+    };
+    if (t.y > 86 && t.y < 150)
+    {
+      if (t.x > 10 && t.x < 90)
+        chosen = 0;
+      if (t.x > 90 && t.x < 166)
+        chosen = 1;
+      if (t.x > 166 && t.x < 224)
+        chosen = 2;
+    }
+  }
 
   sound();
   resetTimerCounter();
@@ -258,24 +286,49 @@ void handleDial()
   long newPosition = M5Dial.Encoder.read();
   if (newPosition == oldDialPosition)
     return;
-  if (mode != -1)
-    return;
-  // 右回し
-  // 先頭を末尾に移動して描画
-  if (newPosition > oldDialPosition)
-    for (int i = 0; i < 5; i++)
-      if (viewItemIndex[i] < numItem - 1)
-        viewItemIndex[i] = viewItemIndex[i] + 1;
-      else
-        viewItemIndex[i] = 0;
-  // 左回し
-  // 末尾を先頭に移動して描画
-  else
-    for (int i = 0; i < 5; i++)
-      if (viewItemIndex[i] > 0)
-        viewItemIndex[i] = viewItemIndex[i] - 1;
-      else
-        viewItemIndex[i] = numItem - 1;
+  if (mode == -1)
+  {
+    // 右回し
+    // 先頭を末尾に移動して描画
+    if (newPosition > oldDialPosition)
+      for (int i = 0; i < 5; i++)
+        if (viewItemIndex[i] < numItem - 1)
+          viewItemIndex[i] = viewItemIndex[i] + 1;
+        else
+          viewItemIndex[i] = 0;
+    // 左回し
+    // 末尾を先頭に移動して描画
+    else
+      for (int i = 0; i < 5; i++)
+        if (viewItemIndex[i] > 0)
+          viewItemIndex[i] = viewItemIndex[i] - 1;
+        else
+          viewItemIndex[i] = numItem - 1;
+  }
+  else if (mode == 7)
+  {
+    int v = 1;
+    if (chosen == 0)
+    {
+      v = 60 * 60;
+    }
+    else if (chosen == 1)
+    {
+      v = 60;
+    }
+
+    // 右回し
+    if (newPosition > oldDialPosition)
+    {
+      timeCount += v;
+    }
+    // 左回し
+    else
+    {
+      if (timeCount - v > 0)
+        timeCount -= v;
+    }
+  }
   oldDialPosition = newPosition;
   sound();
 }
@@ -324,6 +377,10 @@ void resetTime(int resetMode)
   else if (resetMode == 3)
   {
     timeCount = 0;
+  }
+  else if (resetMode == 7)
+  {
+    timeCount = 600;
   }
 }
 
