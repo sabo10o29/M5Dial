@@ -90,10 +90,6 @@ void setup()
   timerAlarmWrite(tim0, 100000, true); // 100msec
   timerAlarmEnable(tim0);
 
-  // シリアル通信
-  Serial.begin(115200);
-  while (!Serial)
-    ;
   Serial.println("プログラム開始");
 
   // wifi, pubsub設定
