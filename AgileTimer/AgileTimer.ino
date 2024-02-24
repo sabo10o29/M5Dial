@@ -1,10 +1,12 @@
 #include "M5Dial.h"
 #include "FS.h"
 #include "SPIFFS.h"
+#include "ConnectWifi.h"
+#include "AWSIoTClient.h"
 M5Canvas img(&M5Dial.Display);
 
 // メニューリスト
-String menuItems[8] = {"20sec Timer", "10min Timer", "25min Timer", "Stop Watch", "Exit", "Status", "Reset", "Timer"};
+String menuItems[9] = {"20sec Timer", "10min Timer", "25min Timer", "Stop Watch", "Exit", "Status", "Reset", "Timer", "Tweet"};
 int numItem = sizeof(menuItems) / sizeof(menuItems[0]);
 int viewItemIndex[5] = {0, 1, 2, 3, 4};
 uint16_t baseItemPosition[5][2] = {
@@ -24,6 +26,7 @@ bool flicker = false;
 long oldDialPosition = -999;
 int timeCount = 0;
 int totalTimeCount = 0;
+int tweetedTotalTimeCount = 0;
 bool enableTouchSound = true;
 int chosen = 2;
 
@@ -48,6 +51,16 @@ void IRAM_ATTR onTimer()
   }
   portEXIT_CRITICAL_ISR(&timerMux);
   xSemaphoreGiveFromISR(timerSemaphore, NULL);
+}
+
+// ネットワーク設定
+bool successConnectWifi = false;
+bool successConnectAWSIoT = false;
+void setupConnectAWSIoT(void *arg)
+{
+  successConnectWifi = connectWifi();
+  successConnectAWSIoT = connectAWSIoT();
+  vTaskDelete(NULL);
 }
 
 void setup()
@@ -76,6 +89,16 @@ void setup()
   timerAttachInterrupt(tim0, &onTimer, true);
   timerAlarmWrite(tim0, 100000, true); // 100msec
   timerAlarmEnable(tim0);
+
+  // シリアル通信
+  Serial.begin(115200);
+  while (!Serial)
+    ;
+  Serial.println("プログラム開始");
+
+  // wifi, pubsub設定
+  xTaskCreatePinnedToCore(setupConnectAWSIoT, "SetupConnectAWSIoT", 4096, NULL, 1, NULL, 1);
+
   delay(200);
 }
 
@@ -96,6 +119,11 @@ void loop()
     updateTime();
 
   draw();
+
+  if (successConnectWifi && successConnectAWSIoT)
+  {
+    loopMQTT();
+  }
 }
 
 void draw()
@@ -181,10 +209,15 @@ void draw()
   {
     img.setTextSize(0.5);
     img.setFont(&fonts::FreeSans24pt7b);
-    img.drawString("SPIFFS Mount: " + String(successSPIFFSMount), 120, 60);
+    img.drawString("SPIFFS: " + String(successSPIFFSMount ? "true" : "false"), 120, 60);
+    img.drawString("Wi-Fi: " + String(successConnectWifi ? "true" : "false"), 120, 80);
+    img.drawString("AWS IoT Core: " + String(successConnectAWSIoT ? "true" : "false"), 120, 100);
     String *numS = getStrTimeArray(totalTimeCount);
-    img.drawString("Total time: " + numS[0] + ":" + numS[1] + ":" + numS[2], 120, 100);
+    img.drawString("Total time: " + numS[0] + ":" + numS[1] + ":" + numS[2], 120, 120);
+    numS = getStrTimeArray(tweetedTotalTimeCount);
+    img.drawString("Tweet time: " + numS[0] + ":" + numS[1] + ":" + numS[2], 120, 140);
   }
+  // Reset
   else if (mode == 6)
   {
     img.setTextSize(1);
@@ -200,6 +233,21 @@ void draw()
     img.drawString(numS[0] + ":" + numS[1] + ":" + numS[2], 120, 120);
     img.fillRect(14 + (chosen * 76), 150, 59, 4, GREEN);
     img.drawString(hasStartedTimer ? "STOP" : "START", 120, 190, 4);
+  }
+  else if (mode == 8)
+  {
+    img.setTextSize(1);
+    img.setFont(&fonts::FreeSans12pt7b);
+    img.drawString("Touch to tweet", 120, 120);
+    String *numS = getStrTimeArray(totalTimeCount - tweetedTotalTimeCount);
+    img.drawString(numS[0] + ":" + numS[1] + ":" + numS[2], 120, 140);
+
+    if (!successConnectWifi || !successConnectAWSIoT)
+    {
+      img.setTextColor(RED);
+      img.drawString("Can't tweet!", 120, 180);
+      img.drawString("Invalid state.", 120, 200);
+    }
   }
   else
   {
@@ -252,9 +300,11 @@ void handleTouch()
   {
     M5Dial.Power.powerOff();
   }
+  // Reset
   else if (mode == 6)
   {
     totalTimeCount = 0;
+    tweetedTotalTimeCount = 0;
     writeConfig();
   }
   // 可変タイマー
@@ -273,6 +323,17 @@ void handleTouch()
         chosen = 1;
       if (t.x > 166 && t.x < 224)
         chosen = 2;
+    }
+  }
+  // Tweet
+  else if (mode == 8)
+  {
+    if (successConnectWifi && successConnectAWSIoT && totalTimeCount - tweetedTotalTimeCount != 0)
+    {
+      publish(totalTimeCount - tweetedTotalTimeCount);
+      tweetedTotalTimeCount = totalTimeCount;
+      writeConfig();
+      mode = -1;
     }
   }
 
@@ -421,16 +482,20 @@ void loadConfig()
   if (!file || file.isDirectory())
     return;
 
-  String loadStr = file.readStringUntil('\n');
+  String loadTotalTimeCount = file.readStringUntil('\n');
+  String loadTweetedTimeCount = file.readStringUntil('\n');
   file.close();
 
-  totalTimeCount = loadStr.toInt();
+  totalTimeCount = loadTotalTimeCount.toInt();
+  tweetedTotalTimeCount = loadTweetedTimeCount.toInt();
 }
 
 void writeConfig()
 {
+  // 経過時間をファイルに保存
   File file = SPIFFS.open(ConfigFilePath, "w");
   file.println(String(totalTimeCount));
+  file.println(String(tweetedTotalTimeCount));
   file.close();
 }
 
