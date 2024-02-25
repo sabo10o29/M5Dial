@@ -2,3 +2,4 @@
 .vscode
 certs.cpp
 config.cpp
+.dist
